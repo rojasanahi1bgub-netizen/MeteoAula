@@ -1,18 +1,24 @@
 using System;
-using System.Threading;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using ServidorTCP.Red;
 
-// Sintaxis: ServidorTCP [PUERTO [IP_ESCUCHA]]
-// Por defecto escucha SOLO en localhost para no exponer el servicio sin permiso.
-// Para probar entre equipos: ServidorTCP 5050 0.0.0.0
-int puerto = 5050;
-IPAddress escucha = IPAddress.Loopback;
-if (args.Length > 2 ||
-    args.Length > 0 && (!int.TryParse(args[0], out puerto) || puerto < 1 || puerto > 65535) ||
-    args.Length == 2 && (!IPAddress.TryParse(args[1], out IPAddress? ipParseada) ||
-                         ipParseada.AddressFamily != AddressFamily.InterNetwork))
+const int PUERTO_POR_DEFECTO = 5050;
+const int PUERTO_MINIMO = 1;
+const int PUERTO_MAXIMO = 65535;
+
+int puerto = PUERTO_POR_DEFECTO;
+IPAddress direccionEscucha = IPAddress.Loopback;
+
+// Valida los argumentos de linea de comandos para puerto e IPv4 de escucha
+bool argumentosInvalidos =
+    args.Length > 2 ||
+    (args.Length > 0 && (!int.TryParse(args[0], out puerto) || puerto < PUERTO_MINIMO || puerto > PUERTO_MAXIMO)) ||
+    (args.Length == 2 && (!IPAddress.TryParse(args[1], out IPAddress? ipParseada) ||
+                          ipParseada.AddressFamily != AddressFamily.InterNetwork));
+
+if (argumentosInvalidos)
 {
     Console.Error.WriteLine("Uso: ServidorTCP [PUERTO [IP_ESCUCHA_IPV4]]");
     Console.Error.WriteLine("Ejemplo LAN: ServidorTCP 5050 0.0.0.0");
@@ -21,12 +27,15 @@ if (args.Length > 2 ||
 }
 
 if (args.Length == 2)
-    escucha = IPAddress.Parse(args[1]);
+{
+    direccionEscucha = IPAddress.Parse(args[1]);
+}
 
+// Configura la cancelacion con Ctrl+C para detener el servidor y liberar el puerto
 using var cancelacion = new CancellationTokenSource();
 ConsoleCancelEventHandler alCerrar = (_, evento) =>
 {
-    evento.Cancel = true; // No matar el proceso sin liberar el listener.
+    evento.Cancel = true;
     cancelacion.Cancel();
 };
 Console.CancelKeyPress += alCerrar;
@@ -34,7 +43,8 @@ Console.CancelKeyPress += alCerrar;
 try
 {
     Console.WriteLine("Ctrl+C detiene el servidor de forma ordenada.");
-    new ServidorTcp().Iniciar(puerto, cancelacion.Token, escucha);
+    ServidorTcp servidor = new ServidorTcp();
+    servidor.Iniciar(puerto, cancelacion.Token, direccionEscucha);
 }
 catch (Exception ex)
 {

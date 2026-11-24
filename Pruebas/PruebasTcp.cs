@@ -8,159 +8,247 @@ using System.Threading.Tasks;
 using ServidorTCP.Protocolo;
 using ServidorTCP.Red;
 
-// Pruebas de extremo a extremo sobre sockets TCP REALES (loopback, puerto libre).
-// No se modifica ni simula el servidor; se inicia ServidorTcp real y se cancela
-// de forma controlada al terminar.
+// Ejecuta pruebas de integracion de extremo a extremo sobre sockets TCP reales en localhost
 internal static class PruebasTcp
 {
+    private const int TIEMPO_ESPERA_SERVIDOR_MS = 1200;
+    private const int TIEMPO_ESPERA_CLIENTE_MS = 4000;
+    private const int TIEMPO_INACTIVIDAD_PRUEBA_MS = 1600;
+    private const int TIEMPO_ARRANQUE_MAXIMO_MS = 6000;
+    private const int TIEMPO_CIERRE_MAXIMO_MS = 5000;
+
+    // Levanta un servidor TCP en un puerto libre y verifica los flujos del protocolo
     public static void Ejecutar(Action<bool, string, string, string> verificar)
     {
         using var cancelar = new CancellationTokenSource();
-        var servidor = new ServidorTcp(1200);
+        var servidor = new ServidorTcp(TIEMPO_ESPERA_SERVIDOR_MS);
         Task tarea = Task.Run(() => servidor.Iniciar(0, cancelar.Token));
+
         try
         {
             bool disponible = SpinWait.SpinUntil(
-                () => servidor.PuertoActual != 0 || tarea.IsCompleted, 6000);
-            verificar(disponible && servidor.PuertoActual > 0,
-                "TCP servidor inicia en puerto libre", "Puerto activo > 0",
+                () => servidor.PuertoActual != 0 || tarea.IsCompleted,
+                TIEMPO_ARRANQUE_MAXIMO_MS);
+
+            verificar(
+                disponible && servidor.PuertoActual > 0,
+                "TCP servidor inicia en puerto libre",
+                "Puerto activo > 0",
                 "Puerto=" + servidor.PuertoActual);
+
             int puerto = servidor.PuertoActual;
 
-            using (var tcp = Conectar(puerto))
+            // Verifica comandos validos, errores de protocolo y cierre con QUIT en una sesion TCP
+            using (TcpClient tcp = Conectar(puerto))
             using (NetworkStream flujo = tcp.GetStream())
             {
                 TramaProtocolo.Escribir(flujo, "LIST");
-                string a = Recibir(flujo);
-                verificar(a == "428|ERROR|HELLO_REQUERIDO",
-                    "TCP LIST antes de HELLO se rechaza", "428|ERROR|HELLO_REQUERIDO", a);
+                string respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "428|ERROR|HELLO_REQUERIDO",
+                    "TCP LIST antes de HELLO se rechaza",
+                    "428|ERROR|HELLO_REQUERIDO",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HELP");
-                a = Recibir(flujo);
-                verificar(a.StartsWith("200|HELP|METEO/1.0|512|", StringComparison.Ordinal),
-                    "TCP HELP antes de HELLO funciona", "200|HELP|METEO/1.0|512|...", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta.StartsWith("200|HELP|METEO/1.0|512|", StringComparison.Ordinal),
+                    "TCP HELP antes de HELLO funciona",
+                    "200|HELP|METEO/1.0|512|...",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HELLO|1.0");
-                a = Recibir(flujo);
-                verificar(a == "200|WELCOME|1.0", "TCP HELLO identifica", "200|WELCOME|1.0", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "200|WELCOME|1.0",
+                    "TCP HELLO identifica",
+                    "200|WELCOME|1.0",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "CURRENT|EST999");
-                a = Recibir(flujo);
-                verificar(a == "404|ERROR|ESTACION_INEXISTENTE",
-                    "TCP error de estacion inexistente", "404|ERROR|ESTACION_INEXISTENTE", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "404|ERROR|ESTACION_INEXISTENTE",
+                    "TCP error de estacion inexistente",
+                    "404|ERROR|ESTACION_INEXISTENTE",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HISTORY|EST003|15");
-                a = Recibir(flujo);
-                verificar(a == "416|ERROR|CANTIDAD_FUERA_DE_RANGO",
-                    "TCP HISTORY fuera de rango", "416|ERROR|CANTIDAD_FUERA_DE_RANGO", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "416|ERROR|CANTIDAD_FUERA_DE_RANGO",
+                    "TCP HISTORY fuera de rango",
+                    "416|ERROR|CANTIDAD_FUERA_DE_RANGO",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "OTRO");
-                a = Recibir(flujo);
-                verificar(a == "400|ERROR|COMANDO_DESCONOCIDO",
-                    "TCP comando desconocido", "400|ERROR|COMANDO_DESCONOCIDO", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "400|ERROR|COMANDO_DESCONOCIDO",
+                    "TCP comando desconocido",
+                    "400|ERROR|COMANDO_DESCONOCIDO",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HISTORY|EST002");
-                a = Recibir(flujo);
-                verificar(a == "401|ERROR|PARAMETRO_FALTANTE",
-                    "TCP parametro faltante", "401|ERROR|PARAMETRO_FALTANTE", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "401|ERROR|PARAMETRO_FALTANTE",
+                    "TCP parametro faltante",
+                    "401|ERROR|PARAMETRO_FALTANTE",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HISTORY|EST002|abc");
-                a = Recibir(flujo);
-                verificar(a == "402|ERROR|CANTIDAD_NO_ENTERA",
-                    "TCP formato invalido", "402|ERROR|CANTIDAD_NO_ENTERA", a);
+                respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "402|ERROR|CANTIDAD_NO_ENTERA",
+                    "TCP formato invalido",
+                    "402|ERROR|CANTIDAD_NO_ENTERA",
+                    respuesta);
 
                 TramaProtocolo.Escribir(flujo, "HISTORY|EST002|20");
                 string cabecera = Recibir(flujo);
                 int items = 0;
+
                 for (int i = 0; i < 20; i++)
                 {
                     string registro = Recibir(flujo);
-                    if (registro.StartsWith("211|READING|", StringComparison.Ordinal)) items++;
+
+                    if (registro.StartsWith("211|READING|", StringComparison.Ordinal))
+                    {
+                        items++;
+                    }
                 }
+
                 string fin = Recibir(flujo);
-                verificar(cabecera == "210|COUNT|20" && items == 20 && fin == "212|END",
+                verificar(
+                    cabecera == "210|COUNT|20" && items == 20 && fin == "212|END",
                     "TCP HISTORY sin limite global y COUNT+END",
                     "210|COUNT|20, 20 ITEM, 212|END",
                     cabecera + ", " + items + " ITEM, " + fin);
 
                 TramaProtocolo.Escribir(flujo, "QUIT");
-                a = Recibir(flujo);
-                verificar(a == "200|BYE", "TCP QUIT responde BYE", "200|BYE", a);
+                respuesta = Recibir(flujo);
+                verificar(respuesta == "200|BYE", "TCP QUIT responde BYE", "200|BYE", respuesta);
+
                 int cierre = flujo.ReadByte();
                 verificar(cierre == -1, "TCP QUIT cierra el socket", "EOF=-1", "EOF=" + cierre);
             }
 
-            using (var tcp = Conectar(puerto))
+            // Verifica que el servidor rechace tramas con UTF-8 invalido y aisle la sesion
+            using (TcpClient tcp = Conectar(puerto))
             using (NetworkStream flujo = tcp.GetStream())
             {
-                byte[] bytes = { 0xC3, 0x28, 0x0A }; // secuencia UTF-8 invalida
+                byte[] bytes = { 0xC3, 0x28, 0x0A };
                 flujo.Write(bytes, 0, bytes.Length);
-                string a = Recibir(flujo);
-                verificar(a == "402|ERROR|UTF8_INVALIDO",
-                    "TCP UTF-8 invalido: error y sesion aislada", "402|ERROR|UTF8_INVALIDO", a);
+                string respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "402|ERROR|UTF8_INVALIDO",
+                    "TCP UTF-8 invalido: error y sesion aislada",
+                    "402|ERROR|UTF8_INVALIDO",
+                    respuesta);
             }
 
-            using (var tcp = Conectar(puerto))
+            // Verifica que el servidor rechace mensajes mayores a 512 bytes
+            using (TcpClient tcp = Conectar(puerto))
             using (NetworkStream flujo = tcp.GetStream())
             {
                 byte[] bytes = Encoding.UTF8.GetBytes(new string('A', 512) + "\n");
                 flujo.Write(bytes, 0, bytes.Length);
-                string a = Recibir(flujo);
-                verificar(a == "413|ERROR|MENSAJE_DEMASIADO_GRANDE",
+                string respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "413|ERROR|MENSAJE_DEMASIADO_GRANDE",
                     "TCP mensaje de 513 bytes: error y sesion aislada",
-                    "413|ERROR|MENSAJE_DEMASIADO_GRANDE", a);
+                    "413|ERROR|MENSAJE_DEMASIADO_GRANDE",
+                    respuesta);
             }
 
-            // Cliente se va sin terminar la linea. El servidor no debe morir.
-            using (var tcp = Conectar(puerto))
+            // Simula una desconexion brusca a mitad de trama para comprobar que el servidor sigue activo
+            using (TcpClient tcp = Conectar(puerto))
             {
-                tcp.LingerState = new LingerOption(true, 0); // RST en desconexion brusca.
+                tcp.LingerState = new LingerOption(true, 0);
                 NetworkStream flujo = tcp.GetStream();
                 byte[] parcial = Encoding.UTF8.GetBytes("HISTORY|EST001|");
                 flujo.Write(parcial, 0, parcial.Length);
             }
 
-            using (var tcp = Conectar(puerto))
+            using (TcpClient tcp = Conectar(puerto))
             using (NetworkStream flujo = tcp.GetStream())
             {
                 TramaProtocolo.Escribir(flujo, "HELLO|1.0");
-                string a = Recibir(flujo);
-                verificar(a == "200|WELCOME|1.0",
-                    "TCP reconecta tras desconexion inesperada", "200|WELCOME|1.0", a);
+                string respuesta = Recibir(flujo);
+                verificar(
+                    respuesta == "200|WELCOME|1.0",
+                    "TCP reconecta tras desconexion inesperada",
+                    "200|WELCOME|1.0",
+                    respuesta);
             }
 
-            using (var tcp = Conectar(puerto))
+            // Verifica que un cliente inactivo sea desconectado al agotarse el tiempo de espera
+            using (TcpClient tcp = Conectar(puerto))
             using (NetworkStream flujo = tcp.GetStream())
             {
-                Thread.Sleep(1600); // Superior al timeout de 1200 ms.
+                Thread.Sleep(TIEMPO_INACTIVIDAD_PRUEBA_MS);
                 bool desconectado;
-                try { desconectado = flujo.ReadByte() == -1; }
-                catch (IOException) { desconectado = true; } // RST remoto tambien significa desconexion.
-                verificar(desconectado, "TCP cliente inactivo se desconecta",
-                    "EOF o error de socket tras timeout", desconectado ? "Desconectado" : "Sigue conectado");
+
+                try
+                {
+                    desconectado = flujo.ReadByte() == -1;
+                }
+                catch (IOException)
+                {
+                    desconectado = true;
+                }
+
+                verificar(
+                    desconectado,
+                    "TCP cliente inactivo se desconecta",
+                    "EOF o error de socket tras timeout",
+                    desconectado ? "Desconectado" : "Sigue conectado");
             }
         }
         finally
         {
             cancelar.Cancel();
-            // Si una prueba falla, se intenta liberar el puerto en todos los casos.
-            try { tarea.Wait(5000); }
-            catch (AggregateException) { /* La prueba previa ya reportara el fallo. */ }
-            verificar(tarea.IsCompleted && !tarea.IsFaulted,
-                "TCP cierre ordenado del listener", "Servidor finalizado sin error",
+
+            try
+            {
+                tarea.Wait(TIEMPO_CIERRE_MAXIMO_MS);
+            }
+            catch (AggregateException)
+            {
+                // Ignora la excepcion de tarea si ya fue registrada por una verificacion previa
+            }
+
+            verificar(
+                tarea.IsCompleted && !tarea.IsFaulted,
+                "TCP cierre ordenado del listener",
+                "Servidor finalizado sin error",
                 "Completed=" + tarea.IsCompleted + ", Faulted=" + tarea.IsFaulted);
         }
     }
 
+    // Abre un cliente TCP conectado al puerto local de pruebas
     private static TcpClient Conectar(int puerto)
     {
         var tcp = new TcpClient();
-        tcp.ReceiveTimeout = 4000;
-        tcp.SendTimeout = 4000;
+        tcp.ReceiveTimeout = TIEMPO_ESPERA_CLIENTE_MS;
+        tcp.SendTimeout = TIEMPO_ESPERA_CLIENTE_MS;
         tcp.Connect(IPAddress.Loopback, puerto);
+
         return tcp;
     }
 
-    private static string Recibir(Stream flujo) =>
-        TramaProtocolo.Leer(flujo) ?? throw new EndOfStreamException("Servidor cerro antes de responder");
+    // Lee una linea del servidor o lanza excepcion si la conexion se cerro
+    private static string Recibir(Stream flujo)
+    {
+        string? linea = TramaProtocolo.Leer(flujo);
+
+        if (linea == null)
+        {
+            throw new EndOfStreamException("Servidor cerro antes de responder");
+        }
+
+        return linea;
+    }
 }
